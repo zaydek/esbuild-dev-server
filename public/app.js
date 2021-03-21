@@ -1,5 +1,6 @@
 (() => {
   // src/index.js
   var root = document.getElementById("root");
-  root.innerHTML = "<h1>adasad</h1>";
+  root.innerHTML = "<h1>Hello, world!</h1>";
+  throw new Error("oops");
 })();

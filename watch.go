@@ -16,9 +16,9 @@ import (
 )
 
 // parseAppFromCLIOptions parses a Retro app from command-line options.
-func newRetroApp() *RetroApp {
+func newApp() *RetroApp {
 	app := &RetroApp{
-		WatchPoll:      250 * time.Millisecond,
+		WatchPoll:      100 * time.Millisecond,
 		WatchDirectory: "src",
 		BuildDirectory: "public",
 		ServePort:      8000,
@@ -90,25 +90,17 @@ body {
 @media (prefers-color-scheme: dark) {
 	body {
 		color: hsla(0, 0%, 100%, 0.95);
-		background-color: rgb(36, 36, 36);
+		background-color: rgb(32, 33, 36);
 	}
 }
 
 		</style>
 	</head>
 	<body>
-		<a href="` + fmt.Sprintf("vscode://file%s/%s:%d:%d", cwd, msg.Location.File, msg.Location.Line, msg.Location.Column) + `">
+		<a href="` + fmt.Sprintf("vscode://file%s/%s:%d:%d", cwd, msg.Location.File, msg.Location.Line, msg.Location.Column+1) + `">
 			<pre><code>` + a.ErrorString() + `</code></pre>
 		</a>
-		<script>
-			const source = new EventSource("/sse")
-			source.addEventListener("reload", e => {
-				window.location.reload()
-			})
-			source.addEventListener("warning", e => {
-				console.warn(JSON.parse(e.data))
-			})
-		</script>
+		<script type="module">const dev = new EventSource("/~dev"); dev.addEventListener("reload", () => { localStorage.setItem("/~dev", "" + Date.now()); window.location.reload() }); dev.addEventListener("error", e => { try { console.error(JSON.parse(e.data)) } catch {} }); window.addEventListener("storage", e => { if (e.key === "/~dev") { window.location.reload() } })</script>
 	</body>
 </html>
 `
@@ -128,14 +120,14 @@ func (a *RetroApp) Build() {
 }
 
 func (a *RetroApp) Rebuild() {
-	start := time.Now()
+	// start := time.Now()
 
 	results := a.esbuildResult.Rebuild()
 	a.esbuildResult = results
 	a.esbuildWarnings = results.Warnings
 	a.esbuildErrors = results.Errors
 
-	stdout.Printf("⚡️ %0.3fs\n", time.Since(start).Seconds())
+	// stdout.Printf("⚡️ %0.3fs\n", time.Since(start).Seconds())
 }
 
 func newWatcher(dir string, poll time.Duration) <-chan struct{} {
@@ -177,8 +169,8 @@ var (
 
 func main() {
 	var (
-		app = newRetroApp()
-		sse = make(chan ServerSentEvent, 8)
+		app     = newApp()
+		browser = make(chan ServerSentEvent, 1)
 	)
 
 	app.Build()
@@ -197,7 +189,7 @@ func main() {
 	go func() {
 		for range newWatcher(app.WatchDirectory, app.WatchPoll) {
 			app.Rebuild()
-			sse <- ServerSentEvent{Event: "reload"}
+			browser <- ServerSentEvent{Event: "reload"}
 		}
 	}()
 
@@ -208,9 +200,9 @@ func main() {
 				stderr.Println(app.WarningString())
 				data, _ := json.Marshal(app.WarningString())
 				defer func() {
-					// Pause 100ms so the server-sent event does not drop on refresh:
+					// Pause 100ms so server-sent events do not drop on refresh
 					time.Sleep(100 * time.Millisecond)
-					sse <- ServerSentEvent{Event: "warning", Data: string(data)}
+					browser <- ServerSentEvent{Event: "warning", Data: string(data)}
 				}()
 			}
 			if len(app.esbuildErrors) > 0 {
@@ -222,23 +214,22 @@ func main() {
 		http.ServeFile(w, r, p.Join(string(app.BuildDirectory), r.URL.Path))
 	})
 
-	http.HandleFunc("/sse", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/~dev", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
-		flusher, ok := w.(http.Flusher)
-		if !ok {
-			stderr.Println("Your browser doesn’t appear to support server-sent events (SSE). " +
-				"This means changes to your source code can’t automatically refresh your browser tab.")
-			return
-		}
+		flusher, _ := w.(http.Flusher)
+		// if !ok {
+		// 	stderr.Println("Your browser doesn’t appear to support server-sent events (SSE). " +
+		// 		"This means changes to your source code can’t automatically refresh your browser tab.")
+		// 	return
+		// }
 		for {
 			select {
-			case e := <-sse:
+			case e := <-browser:
 				e.Write(w)
 				flusher.Flush()
 			case <-r.Context().Done():
-				// No-op
 				return
 			}
 		}
